@@ -145,10 +145,10 @@ plot_histogram(dfs, what_to_plot='fwhm', min_scale=1, plot_name='FWHM over minut
 
 ## Modelling notes
 
-- **Model:** \( y(t) \approx \big(\sum_k a_k e^{-t/\tau_k}\big) \ast \text{IRF}(t - \Delta) + c \), with \(a_k \ge 0\), \(c \ge 0\).  
+- **Model:** $ y(t) \approx \big(\sum_k a_k e^{-t/\tau_k}\big) \ast \text{IRF}(t - \Delta) + c $, with $a_k \ge 0\), \(c \ge 0$.  
 - **Why NNLS?** Enforces physical non-negativity of components and DC background; avoids sign-flip artifacts.  
 - **Why Differential Evolution?** The objective is non-convex in \(\tau_k\) and IRF shift; DE provides robust global search before amplitude estimation.  
-- **Weights:** Residuals are scaled by \(\sqrt{\text{fit}+1}\) to approximate Poisson statistics in photon counting.
+- **Weights:** Residuals are scaled by $\sqrt{\text{fit}+1}$ to approximate Poisson statistics in photon counting.
 
 ---
 
