@@ -107,7 +107,7 @@ def plot_FLIM_spectrum(dataframes, min_scale=1, title="Spectra Plot"):
         num_dfs = len(dataframes)
         cmap = cm.get_cmap('jet', num_dfs)  # Get the 'jet' colormap
         
-        plt.figure(figsize=(20, 6))
+        plt.figure(figsize=(8, 4))
         for i, df in enumerate(dataframes):
             plt.plot(df['Time'], df['Photons'], label=f'Spectra {i+1}', color=cmap(i), alpha=0.1)
         plt.xlabel('Time [ns]')
@@ -125,14 +125,19 @@ def plot_FLIM_spectrum(dataframes, min_scale=1, title="Spectra Plot"):
     
     else:
         # Plot for a single dataframe (no colorbar)
-        plt.figure(figsize=(20, 6))
+        plt.figure(figsize=(8, 4))
+        # apply Savitzky-Golay filter
+        
+        dataframes['Photons'] = savgol_filter(dataframes['Photons'], window_length=6, polyorder=3)
+        
         plt.plot(dataframes['Time'], dataframes['Photons'], color='blue')
         
-        plt.xlabel('Time [ns]')
-        plt.ylabel('Photons')
+        plt.xlabel('Time [ns]', fontsize=14)
+        plt.ylabel('Photons', fontsize=14)
         plt.yscale('log')
-
-        plt.title(title)
+        plt.xticks(fontsize=12)
+        plt.yticks(fontsize=12)
+        plt.title(title, fontsize=16)
         plt.grid(True)
         plt.show()
 def sci_notation(number, sig_fig=2):
@@ -365,7 +370,7 @@ def plot_reconvolution(times, signal, fit, irf, irf_shift, taus, amplitudes, plo
                 f"Taus: {taus_scinot} [ns]\n"
                 f"$\\chi^2_\\nu$: {np.round(chi2_reduced, 3)}")
 
-    fig, ax = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]}, figsize=(12, 8))
+    fig, ax = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]}, figsize=(8, 6))
     fig.tight_layout()
 
     ax[0].set_title(title_str)
