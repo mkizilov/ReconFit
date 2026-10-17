@@ -1,7 +1,6 @@
 # Fluorescence Lifetime Imaging Microscopy Reconvolution Toolkit
 
 **Author:** Mykyta Kizilov  
-**Affiliation:** Advanced Spectroscopy Laboratory, Texas A&M University  
 
 
 This repository contains Python scripts for performing reconvolution curve fitting using both custom NNLS-based and lmfit-based methods. These scripts are designed to analyze time-resolved fluorescence decay data by fitting exponential decay models convolved with an instrument response function (IRF).
