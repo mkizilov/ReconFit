@@ -7,12 +7,18 @@ Reconvolution fitting of time-correlated single-photon counting (TCSPC) fluoresc
 Python. ReconFit fits a sum of exponentials convolved with a measured instrument response function
 (IRF), with a sub-channel IRF shift and a constant background, and plots the fit with its residuals.
 
-It is meant for analysing **freely and publicly available, non-personal TCSPC decay data** and
-**synthetic examples**. It is a small, script-style tool for fitting single decay histograms. It
-is not a validated package and is not intended for clinical or diagnostic use.
+It is a small, script-style tool for fitting single decay histograms. It is not a validated
+package and is not intended for clinical or diagnostic use.
 
-**Who it is for:** students and researchers who want a short, readable reconvolution workflow
+**Who it is for:** hobbyists experimenting with their own spectroscopy and TCSPC platforms, as well
+as students, researchers, and developers who want a short, readable reconvolution workflow
 (NumPy, SciPy, pandas and Matplotlib) that they can inspect and adapt.
+
+**Intended data:** free, openly licensed TCSPC decay data that are freely and publicly available and
+non-personal, plus synthetic examples for learning and testing. Follow each data source's reuse and
+attribution terms; public availability alone does not grant unrestricted reuse.
+
+**Affiliation:** This project is not affiliated with any university.
 
 ## What it does
 
