@@ -1,230 +1,190 @@
-# Fluorescence Lifetime Imaging Microscopy Reconvolution Toolkit
+# ReconFit
 
-**Author:** Mykyta Kizilov  
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![Python 3.10–3.12](https://img.shields.io/badge/python-3.10%E2%80%933.12-blue.svg)](#installation)
 
+Reconvolution fitting of time-correlated single-photon counting (TCSPC) fluorescence decays in
+Python. ReconFit fits a sum of exponentials convolved with a measured instrument response function
+(IRF), with a sub-channel IRF shift and a constant background, and plots the fit with its residuals.
 
-This repository contains Python scripts for performing reconvolution curve fitting using both custom NNLS-based and lmfit-based methods. These scripts are designed to analyze time-resolved fluorescence decay data by fitting exponential decay models convolved with an instrument response function (IRF).
+It is meant for analysing **freely and publicly available, non-personal TCSPC decay data** and
+**synthetic examples**. It is a small, script-style tool for fitting single decay histograms. It
+is not a validated package and is not intended for clinical or diagnostic use.
 
----
-![DASPI](./figures/DASPI.png)
-## Features
+**Who it is for:** students and researchers who want a short, readable reconvolution workflow
+(NumPy, SciPy, pandas and Matplotlib) that they can inspect and adapt.
 
-- Parse single FLIM `.asc` files and ordered sets (e.g., time-series cycles).
-- Baseline removal and optional Savitzky–Golay smoothing.
-- Consistent trimming, time-zero alignment, and IRF normalization.
-- Fast FFT-based convolution and sub-channel IRF shifting.
-- NNLS amplitude estimation with non-negative constraint and DC offset.
-- Global search of decay constants (taus) + IRF shift via Differential Evolution.
-- Diagnostics: χ² (reduced), residuals, component curves, IRF overlay.
-- Batch histograms of metrics (peak, FWHM, integral) with “bad-bin” interpolation.
-- Publication-ready plots (log-scale photons).
+## What it does
 
----
+- **Reads** ASCII `.asc` decay exports (`Time[ns]`, photon counts), either one file or a numbered series.
+- **Fits** `y(t) = Σₖ aₖ · [IRF(t − Δ) ⊗ e^(−t/τₖ)] + c` with `aₖ, c ≥ 0`:
+  - SciPy differential evolution searches the lifetimes `τₖ` and the IRF shift `Δ` (in channels) within bounds you set.
+  - For each candidate, non-negative least squares (NNLS) solves the amplitudes `aₖ` and the offset `c`.
+- **Convolves** with FFTs and shifts the IRF by fractional channels using linear interpolation.
+- **Plots** the data, fit, IRF, shifted IRF and component curves on a log scale, with weighted residuals underneath.
+- **Summarises a series** of decays (peak counts, FWHM or integral per file) as bar charts. Each decay first has its minimum subtracted and is Savitzky–Golay smoothed, and flagged bins can be replaced with values from their neighbours.
+
+![Example reconvolution plot](./figures/DASPI.png)
+
+*Example fit plot (`figures/DASPI.png`), included to show the layout, not as a reference result.
+The current `plot_reconvolution` also adds χ²_ν and a sum-of-exponentials curve.*
 
 ## Installation
 
+The repository has no package metadata, so you run it from a local checkout. `TCSPC_Reconvolution.py`
+imports `numpy`, `pandas`, `matplotlib` and `scipy`:
+
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -U numpy pandas matplotlib scipy
+git clone https://github.com/mkizilov/ReconFit.git
+cd ReconFit
+python3 -m venv .venv                 # use Python 3.10, 3.11 or 3.12
+source .venv/bin/activate             # Windows: .venv\Scripts\activate
+python -m pip install --upgrade pip
+python -m pip install "numpy<2" scipy "pandas<3" "matplotlib<3.8"
+python -m pip install notebook        # optional, only needed for example.ipynb
 ```
 
-> Optional: pin versions for reproducibility (e.g., `numpy>=1.24`, `scipy>=1.11`, `matplotlib>=3.7`, `pandas>=2.0`).
+The upper version bounds are needed because the code uses APIs that newer releases changed or removed:
 
----
+| Package | Breaks at | What fails |
+| --- | --- | --- |
+| NumPy | 2.4 | `np.trapz`, used by `plot_histogram(..., 'integral')` |
+| pandas | 3.0 | `fillna(method=...)`, used by smoothing in `prepare_data` |
+| pandas | 3.0 | Read-only arrays crash fit plotting |
+| Matplotlib | 3.8 | Colorbar handling in `plot_FLIM_spectrum` for a list of decays |
+| Matplotlib | 3.9 | `cm.get_cmap` was removed (also used by `plot_FLIM_spectrum`) |
 
-## Data expectations
+Matplotlib 3.7 needs NumPy 1.x and has no wheels for Python 3.13 or newer, which is why the Python
+range stops at 3.12.
 
-- **File format:** ASCII `.asc` with tab separator and header line containing  
-  `*BLOCK 1  ( Time[ns]  No_of_photons )`.
-- **Columns after parsing:** `Time` (ns), `Photons` (counts).
-- **Series naming:** If using `parse_FLIM_set`, filenames should end with cycle tag like `...c12.asc` (the code sorts by the trailing number matched with `r'c(\d+)\.asc$'`).
+## Quickstart (synthetic data, no files needed)
 
----
-
-## Quick start
+Run this from the repository root. It builds a noisy bi-exponential decay from a Gaussian IRF and
+fits it in a few seconds:
 
 ```python
-import os
-from pathlib import Path
+import numpy as np
+import pandas as pd
+from TCSPC_Reconvolution import reconvolution_fit
 
-# 1) Load a signal/IRF pair
-signal = parse_FLIM("data/my_sample_signal.asc")
-irf    = parse_FLIM("data/my_sample_irf.asc")
+rng = np.random.default_rng(0)
+t = np.arange(512) * 0.02                       # 512 channels, 20 ps each (ns)
 
-# 2) Prepare (trim zero regions, align time-zero, match lengths, normalize IRF)
-sig_prep, irf_prep = prepare_data(signal, irf, window_length=7, polyorder=2)
+irf = np.exp(-0.5 * ((t - 1.0) / 0.05) ** 2)    # Gaussian IRF at 1 ns, sigma 50 ps
+irf /= irf.sum()
+irf_meas = rng.poisson(2e5 * irf + 1.0)        # "measured" IRF with 1 count background
+decay = 3000 * np.exp(-t / 0.4) + 1000 * np.exp(-t / 2.5)   # true taus: 0.4 and 2.5 ns
+signal = rng.poisson(np.convolve(irf, decay)[: t.size] + 2.0)  # + 2 counts background
 
-# 3) Fit a bi-exponential with bounded taus and an IRF shift search
-taus, amps, irf_shift, offset, chi2_red = reconvolution_fit(
-    FLIM_data=[sig_prep, irf_prep],
+df_signal = pd.DataFrame({"Time": t, "Photons": signal.astype(float)})
+df_irf = pd.DataFrame({"Time": t, "Photons": irf_meas.astype(float)})
+
+np.random.seed(0)   # reconvolution_fit has no seed argument; this makes the search repeatable
+taus, amps, irf_shift, offset, chi2 = reconvolution_fit(
+    [df_signal, df_irf],
     exp_num=2,
-    tau_bounds=[(0.02, 0.5), (0.5, 5.0)],   # ns
-    irf_shift_bounds=[-50, 50],             # in channels
-    smooth=None,
-    maxiter=1500,
-    workers=1,
-    plot_title="Bi-exponential reconvolution",
-    filename="fit_bi_exp"
+    tau_bounds=[(0.05, 1.0), (1.0, 6.0)],   # ns, one (low, high) pair per component
+    irf_shift_bounds=[-20, 20],             # channels, not ns
+    maxiter=200,
 )
 
-print("taus (ns):", taus)
-print("amps (photons):", amps)
-print("IRF shift (channels):", irf_shift)
-print("DC offset (photons):", offset)
-print("reduced chi2:", chi2_red)
+print("taus (ns):      ", np.round(taus, 3))
+print("amplitudes:     ", np.round(amps, 1))
+print("IRF shift (ch): ", round(irf_shift, 2))
+print("offset (counts):", round(offset, 2))
+print("chi2 / N:       ", round(chi2, 3))
 ```
 
-**Batch parsing & overview plots:**
-```python
-dfs = parse_FLIM_set(directory="data/time_series", file_startswith="sample_")
-plot_FLIM_spectrum(dfs, min_scale=1, title="Time-series photon decays")
-plot_histogram(dfs, what_to_plot='fwhm', min_scale=1, plot_name='FWHM over minutes')
+Expected output:
+
+```text
+taus (ns):       [0.397 2.475]
+amplitudes:      [2993.4 1013.2]
+IRF shift (ch):  0.03
+offset (counts): 1.93
+chi2 / N:        0.984
 ```
 
----
+To get the diagnostic figure, add `plot_title="Synthetic bi-exponential"`. Adding `filename="name"`
+as well saves the figure to `plots/name.png`, but you have to create the `plots/` directory first.
 
-## Typical workflow
-
-1. **Parse** the raw `.asc` files → `parse_FLIM` / `parse_FLIM_set`.
-2. **(Optional) Smooth** for visualization → `apply_savgol`.
-3. **Prepare** signal/IRF (trim zeros, align time zero, equalize length, normalize IRF) → `prepare_data`.
-4. **Fit** reconvolution model (global DE for taus + IRF shift; NNLS for non-negative amplitudes + DC) → `reconvolution_fit`.
-5. **Inspect** plots & residuals → `plot_reconvolution`.
-6. **Aggregate** metrics over many cycles → `plot_histogram`.
-
----
-
-## API reference (selected)
-
-### Parsing & utilities
-- `parse_FLIM(filename) -> pd.DataFrame`  
-  Reads a single `.asc` into columns `Time`, `Photons`. Drops non-numeric/infinite entries and sorts by time.
-
-- `parse_FLIM_set(directory, file_startswith) -> list[pd.DataFrame]`  
-  Loads and sorts multiple `.asc` files using the cycle number matched by `c(\d+)` before `.asc`.
-
-- `apply_savgol(df, window_length=5, polyorder=3, title=None) -> pd.DataFrame`  
-  Savitzky–Golay smooth for visualization; overlays original vs. smoothed on log-y plot.
-
-- `prepare_data(df_signal, df_irf, window_length=None, polyorder=None) -> (signal, irf)`  
-  Trims leading/trailing zeros, optional rolling mean smoothing, shifts both to `t=0`, matches lengths, **normalizes IRF area to 1.**
-
-### Maths & modelling
-- `convolve(x, h)`  
-  Linear convolution via FFT, returns length of `x` (signal-length crop).
-
-- `find_irf_shift(signal, irf) -> int`  
-  Coarse shift estimate from argmax indices.
-
-- `shift_irf(irf, irf_shift)`  
-  Fractional-channel circular shift with linear interpolation between neighboring samples.
-
-- `nnls_convol_irfexp(x_data, irf, p0, signal_values)`  
-  Builds design matrix `[IRF⊗exp(-t/τ₁), …, IRF⊗exp(-t/τ_K), 1]`, solves `NNLS` for amplitudes and DC.
-
-- `residual_function(params, x_data, irf_values, y_data)`  
-  Given `params = [irf_shift, τ₁..τ_K]`, computes reduced χ² using Poisson-like weighting `1/√(fit+1)`.
-
-- `reconvolution_fit(FLIM_data, exp_num=1, tau_bounds=None, irf_shift_bounds=[-500,500], smooth=None, maxiter=1000, disp=False, workers=1, plot_title=None, filename=None)`  
-  **Global** optimization (Differential Evolution) over IRF shift and τs, **then** NNLS amplitudes + DC; returns  
-  `(taus_sorted, amplitudes_sorted, irf_shift_opt, dc_offset, reduced_chi2)` and optionally plots.
-
-### Plotting & metrics
-- `plot_FLIM_spectrum(dataframes, min_scale=1, title="Spectra Plot")`  
-  Overlay one or many decays (log-y), with a colorbar for series.
-
-- `plot_histogram(dataframes, what_to_plot='max_photons'|'fwhm'|'integral', min_scale=1, bad_bins=None, window_length=11, polyorder=2, plot_name='Plot')`  
-  Batch compute metric per file and bar-plot across cycles; interpolate specified `bad_bins`.
-
-- `plot_reconvolution(times, signal, fit, irf, irf_shift, taus, amplitudes, plot_title, filename=None)`  
-  Two-panel figure: log-scale fits with IRF overlays + residuals; reports χ²_ν and parameters. Saves to `plots/filename.png` if provided.
-
----
-
-## Modelling notes
-
-- **Model:** $y(t) \approx \big(\sum_k a_k e^{-t/\tau_k}\big) \ast \text{IRF}(t - \Delta) + c$, with $a_k \ge 0$, $c \ge 0$.  
-- **Why NNLS?** Enforces physical non-negativity of components and DC background; avoids sign-flip artifacts.  
-- **Why Differential Evolution?** The objective is non-convex in $\tau_k$ and IRF shift; DE provides robust global search before amplitude estimation.  
-- **Weights:** Residuals are scaled by $\sqrt{\text{fit}+1}$ to approximate Poisson statistics in photon counting.
-
----
-
-## Practical guidance
-
-- **Taus & bounds:** Provide problem-specific bounds in **ns** (e.g., `[ (0.05,0.5), (0.5,5.0) ]`). Too-wide bounds slow convergence.
-- **IRF shift bounds:** Expressed in **channels/samples**, not ns. Convert using your instrument’s bin width.
-- **Smoothing:** Use only for visualization (`apply_savgol`) or gentle rolling means during `prepare_data`. Do not over-smooth prior to fitting.
-- **Baseline/DC:** The NNLS model includes a constant offset; no external baseline subtraction required for fitting.
-- **Data trimming:** `prepare_data` auto-trims zero regions (leading/trailing). Ensure the peak is retained.
-- **Parallelism:** `workers` in `reconvolution_fit` passes through to SciPy DE; choose `workers=-1` for all cores (SciPy ≥1.9).
-- **Reproducibility:** Set `np.random.seed(...)` before calling DE if you need repeatable runs (SciPy accepts a `seed` via `differential_evolution(..., seed=...)`—add if needed).
-
----
-
-## Example: tri-exponential fit
+## Working with `.asc` files
 
 ```python
-taus, amps, shift, dc, chi2 = reconvolution_fit(
-    [signal, irf],
-    exp_num=3,
-    tau_bounds=[(0.05,0.5), (0.5,3.0), (3.0,12.0)],
-    irf_shift_bounds=[-40, 40],
-    maxiter=2000,
-    workers=-1,
-    plot_title="Tri-exponential reconvolution"
-)
+import numpy as np
+from TCSPC_Reconvolution import parse_FLIM, parse_FLIM_set, reconvolution_fit, plot_FLIM_spectrum, plot_histogram
+
+decay = parse_FLIM("path/to/decay.asc")   # DataFrame with columns Time (ns) and Photons
+irf = parse_FLIM("path/to/irf.asc")       # same channel width as the decay
+
+np.random.seed(0)
+taus, amps, irf_shift, offset, chi2 = reconvolution_fit(
+    [decay, irf], exp_num=2, tau_bounds=[(0.01, 1.0), (1.0, 10.0)],
+    irf_shift_bounds=[-50, 50], plot_title="Decay vs. IRF")
+
+series = parse_FLIM_set("path/to/folder", file_startswith="sample_c")  # sample_c1.asc, sample_c2.asc, ...
+plot_FLIM_spectrum([d.copy() for d in series], min_scale=1, title="All cycles")
+plot_histogram([d.copy() for d in series], what_to_plot="fwhm", bad_bins=None, plot_name="FWHM per cycle")
 ```
 
----
+`example.ipynb` goes through the same steps with the files in `data/example/`.
 
-## Troubleshooting
+### Expected file format
 
-- **“ValueError: Unknown plot option”** → Use one of `max_photons | fwhm | integral`.
-- **Flat lines / NaNs after parsing** → Check that the file contains the required `*BLOCK 1...` header and tab separators.
-- **Exploding χ² or noisy residuals** → Narrow `tau_bounds`; verify IRF is from the same setup and not saturated; consider `smooth=None` during fitting.
-- **Negative or zero times** → Allowed; plots and fitting use time differences post-alignment.
-- **IRF much shorter than signal** → `prepare_data` matches lengths by truncation; supply equally sampled inputs where possible.
+`parse_FLIM` looks for this exact header line, with two spaces between the fields, and reads the
+two-column block that follows it:
 
----
-
-## File organization
-
-```
-project/
-├─ data/
-│  ├─ my_sample_signal.asc
-│  └─ my_sample_irf.asc
-├─ plots/                 # created on save
-└─ analysis.ipynb         # your scripts/notebooks
+```text
+...instrument/header metadata (ignored)...
+*BLOCK 1  ( Time[ns]  No_of_photons )
+0.000000      0
+0.000509      0
+...
+*END
 ```
 
----
+- Each row is a time in ns and a count, separated by **spaces**. Tab-separated rows fail to parse.
+- The first row after the header becomes the pandas column header, so that channel is dropped.
+- Rows that are not numeric, such as `*END`, are removed, and the rows are sorted by time.
+- `parse_FLIM_set` loads every `.asc` file in the directory whose name starts with `file_startswith`.
+  It orders them by the number in a trailing `c<N>.asc`. Files without that pattern go last.
+- `.sdt` files are **not** read.
 
-## Extending
+## Main functions
 
-- Add **per-component fractional contributions:** `f_k = a_k τ_k / Σ_j a_j τ_j`.
-- Add **multi-ROI or pixelwise fitting:** vectorize `nnls_convol_irfexp` and cache IRF⊗exp design matrices.
-- Expose `seed` arg to `reconvolution_fit` for reproducibility.
-- Support **time-bin width (Δt)** to convert channel shift ↔ ns.
+| Function | Purpose |
+| --- | --- |
+| `reconvolution_fit(FLIM_data, exp_num=1, tau_bounds=None, irf_shift_bounds=[-500, 500], smooth=None, maxiter=1000, disp=False, workers=1, plot_title=None, filename=None)` | Fits `[signal_df, irf_df]`. Returns `(taus, amplitudes, irf_shift, offset, chi2)`, with taus in ascending order. Default `tau_bounds` is `(1e-12, 2)` ns per component. |
+| `prepare_data(df_signal, df_irf, window_length=None, polyorder=None)` | Called by the fit. Trims zero-count channels at both ends and restarts each time axis at 0. Truncates both curves to the same number of channels and scales the IRF so its counts sum to 1. |
+| `parse_FLIM(filename)`, `parse_FLIM_set(directory, file_startswith)` | Read one `.asc` file or a sorted series into DataFrames with `Time` and `Photons` columns. |
+| `plot_reconvolution(...)`, `plot_FLIM_spectrum(...)`, `plot_histogram(...)`, `apply_savgol(...)` | Fit diagnostics, log-scale decay overlays, per-file metrics and a Savitzky–Golay smoothing preview. |
+| `convolve`, `shift_irf`, `nnls_convol_irfexp`, `residual_function` | Building blocks of the model, useful if you want to adapt it. |
 
----
+## Fitting caveats
+
+- **Statistic.** The fit minimises `Σ (fit − data)² / (fit + 1) / N`. This is model-weighted least squares, not a Poisson maximum-likelihood fit, so expect bias when counts are low. The returned `chi2` is divided by `N`, while the plot title divides by `N − K − 1`. Neither gives standard errors for `τ`.
+- **Sampling.** The signal and IRF must use the same uniform channel width. Nothing is resampled; both are truncated by channel index.
+- **IRF shift.** Each curve is trimmed and restarted at t = 0 separately, so any offset between them ends up in the fitted shift. The shift is in channels: multiply by the bin width to get ns.
+- **Circular shift.** Counts shifted past one end wrap around to the other, so keep `irf_shift_bounds` narrow. The default ±500 channels is very wide.
+- **Missing physics.** There is no correction for incomplete decay between excitation pulses, pile-up or dead time. There is no scatter term and no global or pixel-wise (image) fitting.
+- **Identifiability.** Lifetimes that are close together, or comparable to the IRF width or the channel width, are poorly constrained. Results depend on bounds, `exp_num` and the random seed. Treat a `τ` that sits on a bound as a warning sign, check the residuals and compare models.
+- **Smoothing.** `smooth=(w, p)` applies a centred moving average of `w` channels before fitting; `p` only switches it on. This changes the noise statistics and makes χ² hard to interpret.
+- **Plot side effects.** `plot_FLIM_spectrum(single_df)` overwrites `Photons` with smoothed values in place, and `plot_histogram` adds helper columns to its inputs. Pass `df.copy()` if you want to keep the raw counts.
+- **Component curves.** The fit plot draws each component as an unconvolved `aₖ·e^(−t/τₖ)` starting at t = 0.
+- **Runtime.** A single DE fit over a few thousand channels can take tens of seconds or more. `workers` is passed to SciPy (`-1` uses all cores), but process overhead can make it slower for small problems. In scripts, put the call under `if __name__ == "__main__":`.
+
+## Project layout
+
+```text
+ReconFit/
+├── TCSPC_Reconvolution.py   # all parsing, fitting and plotting functions
+├── example.ipynb            # walkthrough using data/example/
+├── data/example/            # example .asc decays and IRF (plus .sdt files, not used by the code)
+├── figures/DASPI.png        # example fit plot
+└── LICENSE                  # MIT
+```
 
 ## License
 
-See [`LICENSE`](./LICENSE).
-
----
-
-## Function index (cheat sheet)
-
-- I/O: `parse_FLIM`, `parse_FLIM_set`, `extract_cycle_number`
-- Prep: `apply_savgol`, `prepare_data`
-- Maths: `convolve`, `find_irf_shift`, `shift_irf`, `exp_decay`, `sci_notation`
-- Core fit: `nnls_convol_irfexp`, `model_func`, `residual_function`, `reconvolution_fit`
-- Metrics/plots: `calculate_fwhm`, `calculate_integral`, `plot_FLIM_spectrum`, `plot_histogram`, `plot_reconvolution`
-
----
-
-**Ready-to-use outcome:** Load your `.asc` signal and IRF, run `prepare_data`, call `reconvolution_fit` with realistic `tau_bounds` and `irf_shift_bounds`, and inspect the plot + χ²_ν. That’s the full reconvolution loop.
+The software is released under the [MIT License](./LICENSE). Datasets you analyse or share with
+it are covered by their own licences and terms, which are separate from the software licence.
